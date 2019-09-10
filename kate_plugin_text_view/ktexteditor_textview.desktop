@@ -1,0 +1,7 @@
+[Desktop Entry]
+X-KDE-Library=ktexteditor_textview
+ServiceTypes=KTextEditor/Plugin
+Type=Service
+Name=TextView
+Comment=Allows other programs to get the typed text using dBus
+

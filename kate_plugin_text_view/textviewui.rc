@@ -1,0 +1,10 @@
+ 
+<!DOCTYPE kpartgui>
+<kpartplugin name="ktexteditor_textview" library="ktexteditor_textview" version="4">
+<MenuBar>
+ <Menu name="tools"><Text>&amp;Tools</Text>
+    <separator group="tools_operations" />
+    <Action name="tools_insert_textview" group="tools_operations"/>
+ </Menu>
+</MenuBar>
+</kpartplugin>
