@@ -5,6 +5,7 @@
 #include <QDBusConnection>
 #include <QHostInfo>
 #include <QHostAddress>
+#include <QMenu>
 
 //seems this cant be placed in mainwindow.h else we get errors
 extern "C"
@@ -18,22 +19,160 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
     audio_listening=true;
+    ignore_close=true;
+
+    connect(ui->action_Quit,SIGNAL(triggered()),this,SLOT(CloseAccept()));
 
     ui->pushButton->setEnabled(true);
     ui->pushButton_disconnect->setEnabled(false);
 
     ui->textEditmain->append("started");
-    textlistner=new TextListner(this);
+    textlistner=new TextListner();
+    textlistner_thread = new QThread(this);
+    textlistner->moveToThread(textlistner_thread);
+    textlistner_thread->start();
+
+    connect(this,SIGNAL(connectToServer(QString,qint16)),textlistner,SLOT(connectToServer(QString,qint16)));
+    connect(this,SIGNAL(setCredentials(QString,QString,QString)),textlistner,SLOT(setCredentials(QString,QString,QString)));
+    connect(this,SIGNAL(disconnectFromServer()),textlistner,SLOT(disconnectFromServer()));
+
     connect(textlistner,SIGNAL(text(QString)),this,SLOT(text(QString)));
     connect(textlistner,SIGNAL(text_voice(QString)),this,SLOT(text_voice(QString)));
     connect(textlistner,SIGNAL(disconnected()),this,SLOT(resetbuttonsstates()));
+    connect(textlistner,SIGNAL(connectToServerResult(bool)),this,SLOT(connectToServerResult(bool)));
+    connect(textlistner,SIGNAL(setCredentialsResult(bool)),this,SLOT(setCredentialsResult(bool)));
 
     qDebug()<<"my window id"<<QCoreApplication::applicationPid();
+
+    QSettings settings("jontisoft","lns");
+
+    ui->lineEdit_address->setText(settings.value("lineEdit_address","192.168.65.129:13633").toString());
+    ui->lineEdit_credentials_folder->setText(settings.value("lineEdit_credentials_folder","cerdentials").toString());
+    ui->checkBox_keepconnected->setChecked(settings.value("checkBox_keepconnected",false).toBool());
 
     QTimer *timer=new QTimer(this);
     connect(timer,SIGNAL(timeout()),this,SLOT(mousetimeout()));
 
-    on_pushButton_clicked();
+}
+
+void MainWindow::onTrayActivate(QSystemTrayIcon::ActivationReason reason)
+{
+    qDebug()<<"onTrayActivate";
+    switch (reason)
+    {
+    case QSystemTrayIcon::Context:
+    {
+        QMenu menu(this);
+        menu.addAction("&Show", this, SLOT(onTrayShow()));
+        menu.addSeparator();
+        menu.addAction("E&xit", this, SLOT(onTrayExit()));
+
+        menu.exec(QCursor::pos());
+    }
+        break;
+
+    case QSystemTrayIcon::DoubleClick:
+    {
+        if(isVisible())toTray();
+         else onTrayShow();
+    }
+        break;
+    case QSystemTrayIcon::Trigger:
+    {
+        if(isVisible())toTray();
+         else onTrayShow();
+    }
+        break;
+
+    default: break;
+    }
+}
+
+void MainWindow::onTrayExit()
+{
+    qDebug()<<"exit";
+    if(trayIcon)trayIcon->deleteLater();
+    ignore_close=false;
+    close();
+}
+
+void MainWindow::onTrayShow()
+{
+    qDebug()<<"show";
+   // if(trayIcon)trayIcon->deleteLater();
+    show();
+}
+
+void MainWindow::CloseAccept()
+{
+    ignore_close=false;
+    close();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    qDebug()<<"closeEvent";
+    if(ignore_close)
+    {
+        event->ignore();
+        toTray();
+    }
+     else
+     {
+        QSettings settings("jontisoft","lns");
+        if(ui->lineEdit_address->text()!=(settings.value("lineEdit_address").toString()))settings.setValue("lineEdit_address",ui->lineEdit_address->text());
+        if(ui->lineEdit_credentials_folder->text()!=(settings.value("lineEdit_credentials_folder").toString()))settings.setValue("lineEdit_credentials_folder",ui->lineEdit_credentials_folder->text());
+        if(ui->checkBox_keepconnected->isChecked()!=(settings.value("checkBox_keepconnected").toBool()))settings.setValue("checkBox_keepconnected",ui->checkBox_keepconnected->isChecked());
+
+        textlistner->deleteLater();
+        textlistner_thread->quit();
+        textlistner_thread->wait();
+        if(!textlistner_thread->isFinished())
+        {
+            qDebug()<<"worker thread still running we will now crash";
+        }
+
+
+     }
+}
+
+void MainWindow::toTray()
+{
+    hide();
+    createTrayItem();
+    trayIcon->show();
+}
+
+void MainWindow::createTrayItem()
+{
+    if(!trayIcon)
+    {
+        trayIcon=new QSystemTrayIcon(this);
+
+       // trayIcon->setIcon(QIcon(":/images/icon.png"));
+
+//        trayIcon->setIcon(QIcon("/home/jontio/qtprojects/LinuxNaturallySpeaking/Linux_Client/icon_small.png"));
+
+        connect(trayIcon, SIGNAL(activated(QSystemTrayIcon::ActivationReason)),this, SLOT(onTrayActivate(QSystemTrayIcon::ActivationReason)));
+
+        QMenu *trayMenu = new QMenu(this);
+        trayMenu->addAction("&Show", this, SLOT(onTrayShow()));
+        trayMenu->addSeparator();
+        trayMenu->addAction("E&xit", this, SLOT(onTrayExit()));
+        trayIcon->setContextMenu(trayMenu);
+
+
+        trayIcon->setToolTip(QCoreApplication::applicationName());
+
+
+//        if(trayIcon)trayIcon->setIcon(QIcon(":/images/icon.png"));
+
+       // trayIcon->setIcon(QIcon("/home/jontio/qtprojects/LinuxNaturallySpeaking/Linux_Client/icon_small2.png"));
+        trayIcon->setIcon(QIcon("/home/jontio/qtprojects/LinuxNaturallySpeaking/Linux_Client/icon.png"));
+        //trayIcon->setIcon(QIcon(":/images/icon.png"));
+
+    }
+
 }
 
 void MainWindow::mousetimeout()
@@ -44,46 +183,70 @@ void MainWindow::mousetimeout()
 
 MainWindow::~MainWindow()
 {
+
     delete ui;
+}
+
+void MainWindow::connectToServerResult(bool connectOk)
+{
+    if(connectOk)
+    {
+        ui->pushButton->setEnabled(false);
+        ui->pushButton_disconnect->setEnabled(true);
+    }
+     else
+     {
+        resetbuttonsstates();
+     }
+}
+
+void MainWindow::setCredentialsResult(bool credentialsSetOk)
+{
+    if(credentialsSetOk)
+    {
+        QStringList strlist=ui->lineEdit_address->text().split(":");
+        if(strlist.size()<2)
+        {
+            ui->textEditmain->append("need address with \":\" ie 0.0.0.0:12345");
+            resetbuttonsstates();
+        }
+        else
+        {
+            QHostInfo res=QHostInfo::fromName(strlist[0]);
+            if(res.addresses().size()==0)
+            {
+                ui->textEditmain->append("can't find address");
+                resetbuttonsstates();
+            }
+            else
+            {
+                QHostAddress addr=res.addresses()[0];
+                qDebug()<<addr.toString();
+                emit connectToServer(addr.toString(),strlist[1].toInt());
+            }
+
+        }
+    }
+     else
+     {
+        ui->textEditmain->append("Can't open credential files: red_ca.pem, blue_local.pem and blue_local.key in folder \""+ui->lineEdit_credentials_folder->text()+"\"");
+        resetbuttonsstates();
+     }
 }
 
 void MainWindow::on_pushButton_clicked()
 {
+    if(!ui->pushButton->isEnabled())return;
+    ui->pushButton->setEnabled(false);
+    ui->pushButton_disconnect->setEnabled(false);
 
-    QStringList strlist=ui->lineEdit_address->text().split(":");
-    if(strlist.size()<2)
-    {
-        ui->textEditmain->append("need address with \":\" ie 0.0.0.0:12345");
-    }
-    else
-    {
-        QHostInfo res=QHostInfo::fromName(strlist[0]);
-        if(res.addresses().size()==0)
-        {
-            ui->textEditmain->append("can't find address");
-        }
-        else
-        {
-            QHostAddress addr=res.addresses()[0];
-            qDebug()<<addr.toString();
-            if(textlistner->connectToServer(addr.toString(),strlist[1].toInt()))
-            {
-                ui->pushButton->setEnabled(false);
-                ui->pushButton_disconnect->setEnabled(true);
-            }
-        }
-
-    }
-
-
-
+    QString cred_dir=ui->lineEdit_credentials_folder->text();
+    emit setCredentials(cred_dir+"/red_ca.pem",cred_dir+"/blue_local.pem",cred_dir+"/blue_local.key");
 }
 
 void MainWindow::on_pushButton_disconnect_clicked()
 {
-    textlistner->disconnectFromServer();
-    resetbuttonsstates();
-
+    emit disconnectFromServer();
 }
 
 void MainWindow::resetbuttonsstates()
@@ -91,6 +254,7 @@ void MainWindow::resetbuttonsstates()
     ui->pushButton->setEnabled(true);
     ui->pushButton_disconnect->setEnabled(false);
     qDebug()<<"buttons resetstate";
+    if(ui->checkBox_keepconnected->isChecked())QTimer::singleShot(2000,this,SLOT(on_pushButton_clicked()));//keep trying to connect
 }
 
 void MainWindow::text(QString text)
@@ -279,3 +443,9 @@ void MainWindow::text_voice(QString text)
     xdo_free((xdo_t*)mxdo);
 }
 
+
+void MainWindow::on_checkBox_keepconnected_stateChanged(int arg1)
+{
+    Q_UNUSED(arg1);
+    on_pushButton_clicked();
+}
